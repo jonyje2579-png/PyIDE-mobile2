@@ -1,0 +1,1 @@
+zip -r PyIDE_final.zip PyIDE -x "*/build/*" "*/.gradle/*" "*/.kotlin/*" "*/local.properties"
