@@ -1,1 +1,80 @@
-zip -r PyIDE_ready.zip PyIDE -x "*/build/*" "*/.gradle/*" "*/.kotlin/*" "*/local.properties"
+name: Build APK
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Скачать репозиторий
+        uses: actions/checkout@v4
+
+      - name: Распаковать проект из zip (если исходники в архиве)
+        run: |
+          if ! find . -maxdepth 3 \( -name 'settings.gradle.kts' -o -name 'settings.gradle' \) -not -path './.git/*' | grep -q .; then
+            Z=./PyIDE_ready.zip
+            [ -f "$Z" ] || Z=$(ls ./*.zip 2>/dev/null | head -1)
+            if [ -z "$Z" ]; then
+              echo "::error::В репозитории нет ни Gradle-проекта, ни zip-архива с ним"
+              exit 1
+            fi
+            echo "Распаковка $Z"
+            unzip -o -q "$Z" -d _src
+          fi
+
+      - name: Найти Gradle-проект
+        run: |
+          echo "== файлы в корне =="
+          ls -la
+          S=$(find . -maxdepth 4 \( -name 'settings.gradle.kts' -o -name 'settings.gradle' \) -not -path './.git/*' | head -1)
+          if [ -z "$S" ]; then
+            echo "::error::settings.gradle.kts не найден. Дерево файлов:"
+            find . -maxdepth 4 -not -path './.git/*' | sort | head -80
+            exit 1
+          fi
+          DIR=$(cd "$(dirname "$S")" && pwd)
+          echo "Gradle-проект: $DIR"
+          rm -f "$DIR/local.properties"
+          echo "PROJECT_DIR=$DIR" >> "$GITHUB_ENV"
+
+      - name: Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Python 3.11 (нужен Chaquopy при сборке)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Android SDK 34 (с принятием лицензий)
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools platforms;android-34 build-tools;34.0.0"
+
+      - name: Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Указать проекту путь к SDK
+        run: echo "sdk.dir=$ANDROID_HOME" > "$PROJECT_DIR/local.properties"
+
+      - name: Собрать APK
+        run: |
+          cd "$PROJECT_DIR"
+          gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Сохранить APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: PyIDE-apk
+          path: ${{ env.PROJECT_DIR }}/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Сохранить отчёты
